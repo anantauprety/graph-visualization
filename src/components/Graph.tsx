@@ -18,6 +18,147 @@ import { ThemeToggle } from './ThemeToggle';
 import { Theme, themes } from '../utils/theme';
 import { initialEdges } from '../data/edges';
 import { initialNodes } from '../data/graph-nodes';
+import { fetchEntityHierarchy } from '../utils/apiClient';
+
+interface ConfirmationDialogProps {
+  data: { nodes: Node[]; edges: any[] } | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
+  error: string | null;
+  theme: Theme;
+}
+
+function ConfirmationDialog({ data, onConfirm, onCancel, loading, error, theme }: ConfirmationDialogProps) {
+  const currentTheme = themes[theme];
+  
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: 'rgba(0, 0, 0, 0.5)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 1000,
+    }}>
+      <div style={{
+        background: currentTheme.background,
+        borderRadius: '8px',
+        padding: '20px',
+        width: '90%',
+        maxWidth: '800px',
+        maxHeight: '80vh',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+        boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+      }}>
+        <h3 style={{ 
+          margin: 0,
+          color: currentTheme.text,
+          fontSize: '18px',
+          fontWeight: 600,
+        }}>
+          API Data Preview
+        </h3>
+        
+        {loading && (
+          <div style={{ 
+            color: currentTheme.text,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}>
+            Loading API data...
+          </div>
+        )}
+        
+        {error && (
+          <div style={{ 
+            color: '#ef4444',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            {error}
+          </div>
+        )}
+        
+        {data && (
+          <div style={{
+            flex: 1,
+            overflowY: 'auto',
+            background: currentTheme.searchBg,
+            borderRadius: '6px',
+            padding: '12px',
+            fontFamily: 'monospace',
+            fontSize: '14px',
+            color: currentTheme.text,
+          }}>
+            <pre style={{ margin: 0 }}>
+              {JSON.stringify(data, null, 2)}
+            </pre>
+          </div>
+        )}
+        
+        <div style={{
+          display: 'flex',
+          gap: '12px',
+          justifyContent: 'flex-end',
+          marginTop: '8px',
+        }}>
+          <button
+            onClick={onCancel}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: `1px solid ${currentTheme.nodeBorder}`,
+              background: 'transparent',
+              color: currentTheme.text,
+              cursor: 'pointer',
+              fontSize: '14px',
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading || !!error || !data}
+            style={{
+              padding: '8px 16px',
+              borderRadius: '6px',
+              border: 'none',
+              background: loading || error || !data ? '#9ca3af' : '#3b82f6',
+              color: 'white',
+              cursor: loading || error || !data ? 'not-allowed' : 'pointer',
+              fontSize: '14px',
+            }}
+          >
+            Apply Data
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function Graph() {
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
@@ -29,6 +170,13 @@ export function Graph() {
   const [activeFilters, setActiveFilters] = useState<Set<NodeLevel>>(
     new Set(['0', '1', '2', '3'])
   );
+  const [useApiData, setUseApiData] = useState(false);
+  const [apiLoading, setApiLoading] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [apiNodes, setApiNodes] = useState<Node[]>([]);
+  const [apiEdges, setApiEdges] = useState<any[]>([]);
+  const [showDialog, setShowDialog] = useState(false);
+  const [pendingApiData, setPendingApiData] = useState<{ nodes: Node[]; edges: any[] } | null>(null);
 
   const currentTheme = themes[theme];
 
@@ -71,28 +219,23 @@ export function Graph() {
   };
 
   const getInitialNodes = () => {
-    const baseNodes = initialNodes.map((node: Node) => ({
+    const nodes = useApiData ? (apiNodes.length > 0 ? apiNodes : []) : initialNodes;
+    const baseNodes = nodes.map((node: Node) => ({
       ...node,
-      position: HIERARCHICAL_POSITIONS[node.id as keyof typeof HIERARCHICAL_POSITIONS],
+      position: layout === 'circular'
+        ? generateCircularLayout(nodes)[nodes.findIndex(n => n.id === node.id)]?.position || node.position
+        : HIERARCHICAL_POSITIONS[node.id as keyof typeof HIERARCHICAL_POSITIONS] || {
+            x: (parseInt(node.id) % 5) * 300 + 100,
+            y: Math.floor(parseInt(node.id) / 5) * 200 + 100
+          },
       style: getNodeStyle(node.id, node.type),
     }));
 
-    return layout === 'circular' ? generateCircularLayout(baseNodes) : baseNodes;
+    return baseNodes;
   };
 
   const [nodesState, setNodes, onNodesChange] = useNodesState(getInitialNodes());
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-
-  useEffect(() => {
-    const currentNodes = nodesState.map(node => ({
-      ...node,
-      position: layout === 'circular' 
-        ? generateCircularLayout(nodesState)[nodesState.findIndex(n => n.id === node.id)].position
-        : HIERARCHICAL_POSITIONS[node.id as keyof typeof HIERARCHICAL_POSITIONS],
-      style: getNodeStyle(node.id, node.type),
-    }));
-    setNodes(currentNodes);
-  }, [layout, activeFilters, theme]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(useApiData ? (apiEdges.length > 0 ? apiEdges : []) : initialEdges);
 
   const getFilteredNodes = useCallback((nodes: Node[], searchTerm: string, includeChildren: boolean) => {
     if (!searchTerm) return nodes;
@@ -238,9 +381,61 @@ export function Graph() {
     });
   }, []);
 
-  useEffect(() => {
-    setNodes(getInitialNodes());
-  }, [activeFilters]);
+  const handleApiToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const checked = e.target.checked;
+    if (checked) {
+      setShowDialog(true);
+      setApiLoading(true);
+      setApiError(null);
+      
+      // Fetch data but don't apply it yet
+      fetchEntityHierarchy()
+        .then(({ nodes, edges }) => {
+          setPendingApiData({ nodes, edges });
+        })
+        .catch(error => {
+          console.error('API Error:', error);
+          setApiError(error instanceof Error ? error.message : 'Failed to fetch data');
+        })
+        .finally(() => {
+          setApiLoading(false);
+        });
+    } else {
+      setUseApiData(false);
+      setNodes(getInitialNodes());
+      setEdges(initialEdges);
+    }
+  }, []);
+
+  const handleConfirmApiData = useCallback(() => {
+    if (!pendingApiData) return;
+    
+    setUseApiData(true);
+    setApiNodes(pendingApiData.nodes);
+    setApiEdges(pendingApiData.edges);
+    
+    const updatedNodes = pendingApiData.nodes.map(node => ({
+      ...node,
+      position: layout === 'circular'
+        ? generateCircularLayout(pendingApiData.nodes)[pendingApiData.nodes.findIndex(n => n.id === node.id)]?.position || node.position
+        : {
+            x: (parseInt(node.id) % 5) * 300 + 100,
+            y: Math.floor(parseInt(node.id) / 5) * 200 + 100
+          },
+      style: getNodeStyle(node.id, node.type),
+    }));
+    
+    setNodes(updatedNodes);
+    setEdges(pendingApiData.edges);
+    setShowDialog(false);
+  }, [pendingApiData, layout]);
+
+  const handleCancelApiData = useCallback(() => {
+    setShowDialog(false);
+    setUseApiData(false);
+    setPendingApiData(null);
+    setApiError(null);
+  }, []);
 
   return (
     <div style={{ 
@@ -251,6 +446,16 @@ export function Graph() {
       background: currentTheme.background,
       color: currentTheme.text,
     }}>
+      {showDialog && (
+        <ConfirmationDialog
+          data={pendingApiData}
+          onConfirm={handleConfirmApiData}
+          onCancel={handleCancelApiData}
+          loading={apiLoading}
+          error={apiError}
+          theme={theme}
+        />
+      )}
       <div style={{
         padding: '12px 20px',
         borderBottom: `1px solid ${currentTheme.nodeBorder}`,
@@ -409,7 +614,66 @@ export function Graph() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginLeft: 'auto' }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}>
+            <label style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontSize: '14px',
+              color: currentTheme.text,
+              cursor: apiLoading ? 'wait' : 'pointer',
+            }}>
+              <input
+                type="checkbox"
+                checked={useApiData}
+                onChange={handleApiToggle}
+                disabled={apiLoading}
+                style={{ cursor: apiLoading ? 'wait' : 'pointer' }}
+              />
+              Use API Data
+              {apiLoading && (
+                <span style={{ 
+                  fontSize: '12px', 
+                  color: `${currentTheme.text}80`,
+                  marginLeft: '4px',
+                }}>
+                  Loading...
+                </span>
+              )}
+            </label>
+
+            {apiError && (
+              <span style={{ 
+                fontSize: '12px', 
+                color: '#ef4444',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                {apiError}
+              </span>
+            )}
+          </div>
+
           <button
             onClick={() => setShowEdges(!showEdges)}
             title={`${showEdges ? 'Hide' : 'Display'} Edges`}
