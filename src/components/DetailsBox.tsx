@@ -5,7 +5,7 @@ interface ExtendedDetailsBoxProps extends DetailsBoxProps {
   theme: Theme;
 }
 
-export const DetailsBox = ({ id, x, y, onClose, theme }: ExtendedDetailsBoxProps) => {
+export const DetailsBox = ({ nodeId, x, y, onClose, theme }: ExtendedDetailsBoxProps) => {
   const currentTheme = themes[theme];
   
   return (
@@ -35,7 +35,7 @@ export const DetailsBox = ({ id, x, y, onClose, theme }: ExtendedDetailsBoxProps
         borderBottom: `1px solid ${currentTheme.nodeBorder}`,
         paddingBottom: '8px'
       }}>
-        <strong>Node Details</strong>
+        <strong>Company Details</strong>
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -57,13 +57,7 @@ export const DetailsBox = ({ id, x, y, onClose, theme }: ExtendedDetailsBoxProps
         </button>
       </div>
       <div>
-        <p style={{ margin: '4px 0' }}><strong>ID:</strong> {id}</p>
-        <p style={{ margin: '4px 0' }}><strong>Type:</strong> {parseInt(id) % 2 === 1 ? 'Odd' : 'Even'}</p>
-        <p style={{ margin: '4px 0' }}><strong>Level:</strong> {
-          id === '1' ? '0 (Root)' :
-          ['2', '3'].includes(id) ? '1 (Process)' :
-          '2 (Sub-Process)'
-        }</p>
+        <p style={{ margin: '4px 0' }}><strong>Company Code:</strong> {nodeId}</p>
       </div>
       <style>
         {`

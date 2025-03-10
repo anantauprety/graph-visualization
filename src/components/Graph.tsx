@@ -11,15 +11,13 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
-import { getNodeStyle } from '../utils/nodeStyles';
-import { generateCircularLayout, getChildNodeIds, HIERARCHICAL_POSITIONS } from '../utils/layoutUtils';
+import { loadCompanyRelations, convertToGraphData, closePool } from '../utils/redshiftConnector';
+import { generateCircularLayout } from '../utils/layoutUtils';
 import { LayoutType, SelectedNode } from '../types';
 import { DetailsBox } from './DetailsBox';
 import { Legend, NodeLevel } from './Legend';
 import { ThemeToggle } from './ThemeToggle';
 import { Theme, themes } from '../utils/theme';
-import { initialEdges } from '../data/edges';
-import { initialNodes } from '../data/graph-nodes';
 
 export function Graph() {
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null);
@@ -28,29 +26,43 @@ export function Graph() {
   const [layout, setLayout] = useState<LayoutType>('hierarchical');
   const [theme, setTheme] = useState<Theme>('light');
   const [showEdges, setShowEdges] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeFilters, setActiveFilters] = useState<Set<NodeLevel>>(
-    new Set(['0', '1', '2', '3'])
+    new Set(['0', '1', '2', '3', '4'])
   );
 
   const currentTheme = themes[theme];
 
+  // Get node level based on the number of ancestors
   const getNodeLevel = (nodeId: string): NodeLevel => {
-    const id = parseInt(nodeId);
-    if (id === 1) return '0';
-    if (id <= 3) return '1';
-    if (id <= 12) return '2';
-    return '3';
+    const parentEdges = edges.filter(edge => edge.target === nodeId);
+    if (parentEdges.length === 0) return '0';
+    
+    let level = 0;
+    let currentId = nodeId;
+    
+    while (true) {
+      const parentEdge = edges.find(edge => edge.target === currentId);
+      if (!parentEdge) break;
+      level++;
+      currentId = parentEdge.source;
+    }
+    
+    return Math.min(level, 4).toString() as NodeLevel;
   };
 
-  const getNodeStyle = (nodeId: string, nodeType: string | undefined) => {
+  const getNodeStyle = (nodeId: string) => {
     const level = getNodeLevel(nodeId);
     const colors = {
-      '0': '#818cf8',
-      '1': '#f472b6',
-      '2': '#4ade80',
-      '3': '#fb923c'
+      '0': '#818cf8', // Root companies
+      '1': '#f472b6', // First-level subsidiaries
+      '2': '#4ade80', // Second-level subsidiaries
+      '3': '#fb923c', // Third-level subsidiaries
+      '4': '#a78bfa'  // Fourth-level and deeper subsidiaries
     };
     
+    const node = nodesState.find(n => n.id === nodeId);
     const baseStyle = {
       padding: '10px',
       borderWidth: '2px',
@@ -58,7 +70,7 @@ export function Graph() {
       fontSize: '14px',
       fontWeight: 500,
       textAlign: 'center' as const,
-      width: nodeType === 'input' ? '150px' : '80px',
+      width: '150px',
       height: '80px',
     };
     
@@ -72,37 +84,71 @@ export function Graph() {
     };
   };
 
-  const getInitialNodes = () => {
-    const baseNodes = initialNodes.map((node: Node) => {
-      const level = getNodeLevel(node.id);
-      const style = getNodeStyle(node.id, node.type);
-      return {
-        ...node,
-        position: HIERARCHICAL_POSITIONS[node.id as keyof typeof HIERARCHICAL_POSITIONS],
-        style,
-      };
-    });
+  const [nodesState, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
-    return layout === 'circular' ? generateCircularLayout(baseNodes) : baseNodes;
-  };
-
-  const [nodesState, setNodes, onNodesChange] = useNodesState(getInitialNodes());
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-
+  // Load company data on component mount
   useEffect(() => {
-    const currentNodes = nodesState.map(node => {
-      const level = getNodeLevel(node.id);
-      const style = getNodeStyle(node.id, node.type);
-      return {
-        ...node,
-        position: layout === 'circular' 
-          ? generateCircularLayout(nodesState)[nodesState.findIndex(n => n.id === node.id)].position
-          : HIERARCHICAL_POSITIONS[node.id as keyof typeof HIERARCHICAL_POSITIONS],
-        style,
-      };
-    });
-    setNodes(currentNodes);
-  }, [layout, activeFilters, theme]);
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        const relations = await loadCompanyRelations();
+        const { nodes, edges } = convertToGraphData(relations);
+        
+        // Apply initial layout
+        const positionedNodes = layout === 'circular' 
+          ? generateCircularLayout(nodes)
+          : nodes.map((node, index) => ({
+              ...node,
+              position: {
+                x: (index % 5) * 200,
+                y: Math.floor(index / 5) * 150
+              }
+            }));
+
+        setNodes(positionedNodes);
+        setEdges(edges);
+        setError(null);
+      } catch (err) {
+        setError('Failed to load company data. Please try again later.');
+        console.error('Error loading company data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+    return () => {
+      // Clean up connection pool on unmount
+      closePool();
+    };
+  }, []);
+
+  // Update layout when changed
+  useEffect(() => {
+    if (nodesState.length === 0) return;
+
+    const updatedNodes = layout === 'circular'
+      ? generateCircularLayout(nodesState)
+      : nodesState.map((node, index) => ({
+          ...node,
+          position: {
+            x: (index % 5) * 200,
+            y: Math.floor(index / 5) * 150
+          }
+        }));
+
+    setNodes(updatedNodes);
+  }, [layout]);
+
+  // Update node styles when filters or theme changes
+  useEffect(() => {
+    const updatedNodes = nodesState.map(node => ({
+      ...node,
+      style: getNodeStyle(node.id)
+    }));
+    setNodes(updatedNodes);
+  }, [activeFilters, theme]);
 
   const getFilteredNodes = useCallback((nodes: Node[], searchTerm: string, includeChildren: boolean) => {
     if (!searchTerm) return nodes;
@@ -117,12 +163,13 @@ export function Graph() {
 
     const matchingNodeIds = new Set(directMatches.map(node => node.id));
     directMatches.forEach(node => {
-      const childIds = getChildNodeIds(node.id, initialEdges);
+      const childEdges = edges.filter(edge => edge.source === node.id);
+      const childIds = childEdges.map(edge => edge.target);
       childIds.forEach(id => matchingNodeIds.add(id));
     });
 
     return nodes.filter(node => matchingNodeIds.has(node.id));
-  }, []);
+  }, [edges]);
 
   const onConnect = useCallback(
     (connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
@@ -159,82 +206,32 @@ export function Graph() {
   const onSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchTerm(value);
-    if (!value) {
-      setNodes(getInitialNodes());
-    } else {
-      const filteredNodes = getFilteredNodes(getInitialNodes(), value, includeChildren);
-      setNodes(filteredNodes);
-    }
-  }, [getFilteredNodes, includeChildren, setNodes, layout]);
+    const filteredNodes = getFilteredNodes(nodesState, value, includeChildren);
+    setNodes(filteredNodes.map(node => ({
+      ...node,
+      style: getNodeStyle(node.id)
+    })));
+  }, [getFilteredNodes, includeChildren, setNodes, nodesState]);
 
   const onSearchClear = useCallback(() => {
     setSearchTerm('');
-    setNodes(getInitialNodes());
-  }, [setNodes, layout]);
+    setNodes(nodesState.map(node => ({
+      ...node,
+      style: getNodeStyle(node.id)
+    })));
+  }, [setNodes, nodesState]);
 
   const onIncludeChildrenChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const checked = e.target.checked;
     setIncludeChildren(checked);
-    if (!searchTerm) {
-      setNodes(getInitialNodes());
-    } else {
-      const filteredNodes = getFilteredNodes(getInitialNodes(), searchTerm, checked);
-      setNodes(filteredNodes);
+    if (searchTerm) {
+      const filteredNodes = getFilteredNodes(nodesState, searchTerm, checked);
+      setNodes(filteredNodes.map(node => ({
+        ...node,
+        style: getNodeStyle(node.id)
+      })));
     }
-  }, [searchTerm, getFilteredNodes, setNodes, layout]);
-
-  const handleNodesChange = useCallback((changes: any[]) => {
-    const positionChanges = changes.filter(change => change.type === 'position' && change.dragging);
-    
-    if (positionChanges.length > 0 && layout === 'hierarchical') {
-      positionChanges.forEach(change => {
-        if (change.position) {
-          HIERARCHICAL_POSITIONS[change.id as keyof typeof HIERARCHICAL_POSITIONS] = change.position;
-        }
-      });
-    }
-    
-    if (positionChanges.length > 0) {
-      const updatedChanges = [...changes];
-      
-      positionChanges.forEach(change => {
-        const nodeId = change.id;
-        const childIds = getChildNodeIds(nodeId, edges);
-        
-        if (childIds.length > 0) {
-          const originalNode = nodesState.find(n => n.id === nodeId);
-          if (originalNode && change.position) {
-            const dx = change.position.x - originalNode.position.x;
-            const dy = change.position.y - originalNode.position.y;
-            
-            childIds.forEach(childId => {
-              const childNode = nodesState.find(n => n.id === childId);
-              if (childNode) {
-                const newPosition = {
-                  x: childNode.position.x + dx,
-                  y: childNode.position.y + dy,
-                };
-                updatedChanges.push({
-                  type: 'position',
-                  id: childId,
-                  position: newPosition,
-                  dragging: change.dragging,
-                });
-                
-                if (layout === 'hierarchical') {
-                  HIERARCHICAL_POSITIONS[childId as keyof typeof HIERARCHICAL_POSITIONS] = newPosition;
-                }
-              }
-            });
-          }
-        }
-      });
-      
-      onNodesChange(updatedChanges);
-    } else {
-      onNodesChange(changes);
-    }
-  }, [nodesState, onNodesChange, layout, edges]);
+  }, [searchTerm, getFilteredNodes, setNodes, nodesState]);
 
   const handleFilterChange = useCallback((level: NodeLevel) => {
     setActiveFilters(prev => {
@@ -248,298 +245,100 @@ export function Graph() {
     });
   }, []);
 
-  useEffect(() => {
-    setNodes(getInitialNodes());
-  }, [activeFilters]);
+  if (loading) {
+    return <div className="flex items-center justify-center h-screen">
+      <div className="text-xl font-semibold text-gray-700">Loading company data...</div>
+    </div>;
+  }
+
+  if (error) {
+    return <div className="flex items-center justify-center h-screen">
+      <div className="text-xl font-semibold text-red-600">{error}</div>
+    </div>;
+  }
 
   return (
-    <div style={{ 
-      width: '100%', 
-      height: '100vh', 
-      display: 'flex', 
-      flexDirection: 'column',
-      background: currentTheme.background,
-      color: currentTheme.text,
-    }}>
-      <div style={{
-        padding: '12px 20px',
-        borderBottom: `1px solid ${currentTheme.nodeBorder}`,
-        background: currentTheme.background,
-        display: 'flex',
-        alignItems: 'center',
-        gap: '20px',
-        justifyContent: 'space-between'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+    <div className="h-screen w-full bg-white dark:bg-gray-900">
+      <div className="absolute top-4 left-4 z-10 flex flex-col gap-4 w-64">
+        <div className="flex items-center gap-2">
           <select
             value={layout}
             onChange={(e) => setLayout(e.target.value as LayoutType)}
-            style={{
-              padding: '6px 12px',
-              borderRadius: '6px',
-              border: `1px solid ${currentTheme.nodeBorder}`,
-              background: currentTheme.searchBg,
-              color: currentTheme.text,
-              cursor: 'pointer',
-            }}
+            className="p-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
           >
             <option value="hierarchical">Hierarchical Layout</option>
             <option value="circular">Circular Layout</option>
           </select>
-
-          <div style={{
-            width: '1px',
-            height: '24px',
-            background: currentTheme.nodeBorder,
-          }} />
-
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '8px',
-            width: '400px',
-            position: 'relative',
-          }}>
-            <div style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '8px',
-              padding: '12px',
-              background: theme === 'dark' ? currentTheme.controlsBg : 'white',
-              border: `1px solid ${currentTheme.nodeBorder}`,
-              borderRadius: '8px',
-              boxShadow: theme === 'dark' ? '0 1px 2px rgba(0, 0, 0, 0.1)' : '0 1px 3px rgba(0, 0, 0, 0.05)',
-            }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-              }}>
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  flex: 1,
-                  background: currentTheme.searchBg,
-                  borderRadius: '6px',
-                  padding: '6px 12px',
-                  border: theme === 'dark' ? `1px solid ${currentTheme.nodeBorder}` : 'none',
-                }}>
-                  <input
-                    type="text"
-                    placeholder="Search nodes by label or ID..."
-                    value={searchTerm}
-                    onChange={onSearchChange}
-                    style={{
-                      border: 'none',
-                      background: 'none',
-                      outline: 'none',
-                      width: '100%',
-                      fontSize: '14px',
-                      color: currentTheme.searchText,
-                    }}
-                  />
-                  {searchTerm && (
-                    <button
-                      onClick={onSearchClear}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        cursor: 'pointer',
-                        padding: '0 4px',
-                        color: currentTheme.text,
-                        fontSize: '16px',
-                      }}
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-
-                <label style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '13px',
-                  color: searchTerm ? currentTheme.text : `${currentTheme.text}80`,
-                  cursor: searchTerm ? 'pointer' : 'not-allowed',
-                  transition: 'all 0.2s ease',
-                  whiteSpace: 'nowrap',
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={includeChildren}
-                    onChange={onIncludeChildrenChange}
-                    disabled={!searchTerm}
-                    style={{ 
-                      cursor: searchTerm ? 'pointer' : 'not-allowed',
-                      opacity: searchTerm ? 1 : 0.5,
-                    }}
-                  />
-                  Include children
-                </label>
-              </div>
-            </div>
-
-            {searchTerm && (
-              <div style={{
-                position: 'absolute',
-                top: '92px',
-                left: '0',
-                right: '0',
-                padding: '8px 12px',
-                background: currentTheme.legendBg,
-                border: `1px solid ${currentTheme.nodeBorder}`,
-                borderRadius: '6px',
-                boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '13px',
-                color: `${currentTheme.text}99`,
-                zIndex: 10,
-              }}>
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ marginTop: '-1px' }}
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="16" x2="12" y2="12" />
-                  <line x1="12" y1="8" x2="12" y2="8" />
-                </svg>
-                {`${getFilteredNodes(nodesState, searchTerm, includeChildren).length} nodes found`}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
-          <button
-            onClick={() => setShowEdges(!showEdges)}
-            title={`${showEdges ? 'Hide' : 'Display'} Edges`}
-            style={{
-              background: showEdges ? currentTheme.searchBg : 'transparent',
-              border: `1px solid ${currentTheme.nodeBorder}`,
-              borderRadius: '6px',
-              padding: '6px',
-              cursor: 'pointer',
-              color: currentTheme.text,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'all 0.2s ease',
-            }}
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M5 3 H10 A2 2 0 0 1 12 5 V19 A2 2 0 0 0 14 21 H19" />
-              <circle cx="4" cy="3" r="2" />
-              <circle cx="20" cy="21" r="2" />
-            </svg>
-          </button>
           <ThemeToggle theme={theme} onThemeChange={setTheme} />
         </div>
-      </div>
-      <div style={{ flex: 1, background: currentTheme.background }}>
-        <style>
-          {`
-            .react-flow__node {
-              transition: all 0.2s ease;
-            }
-            .react-flow__node:hover {
-              transform: translateY(-2px);
-            }
-            .react-flow__node[data-type="input"] {
-              width: 150px;
-              height: 80px;
-            }
-            .react-flow__node[data-type="input"]:hover {
-              box-shadow: 0 4px 6px -1px rgba(99, 102, 241, 0.4);
-            }
-            .react-flow__node[data-nodeid="2"],
-            .react-flow__node[data-nodeid="3"] {
-              width: 80px;
-              height: 80px;
-            }
-            .react-flow__controls {
-              background: ${currentTheme.controlsBg};
-            }
-            .react-flow__controls-button {
-              background: ${currentTheme.controlsBg};
-              border-bottom: 1px solid ${currentTheme.nodeBorder};
-              color: ${currentTheme.controlsButton};
-            }
-            .react-flow__controls-button:hover {
-              background: ${currentTheme.searchBg};
-            }
-            .react-flow__edge-path {
-              stroke: ${currentTheme.edgeStroke};
-              stroke-width: 2;
-              transition: all 0.2s ease;
-            }
-            .react-flow__edge:hover .react-flow__edge-path {
-              stroke: ${currentTheme.text};
-              stroke-width: 3;
-            }
-            .react-flow__edge-text {
-              fill: ${currentTheme.text};
-              font-size: 12px;
-              transition: all 0.2s ease;
-            }
-            .react-flow__edge:hover .react-flow__edge-text {
-              transform: scale(1.05);
-            }
-            .react-flow__background {
-              background: ${currentTheme.background};
-            }
-            input::placeholder {
-              color: ${theme === 'dark' ? 'rgba(226, 232, 240, 0.5)' : 'inherit'};
-            }
-          `}
-        </style>
-        {selectedNode && (
-          <DetailsBox
-            id={selectedNode.id}
-            x={selectedNode.x}
-            y={selectedNode.y}
-            onClose={() => setSelectedNode(null)}
-            theme={theme}
+
+        <div className="relative">
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={onSearchChange}
+            placeholder="Search companies..."
+            className="w-full p-2 pr-8 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
           />
-        )}
+          {searchTerm && (
+            <button
+              onClick={onSearchClear}
+              className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            >
+              ×
+            </button>
+          )}
+        </div>
+
+        <label className="flex items-center gap-2 text-gray-900 dark:text-gray-100">
+          <input
+            type="checkbox"
+            checked={includeChildren}
+            onChange={onIncludeChildrenChange}
+            disabled={!searchTerm}
+            className="rounded border-gray-300 dark:border-gray-600"
+          />
+          <span className={!searchTerm ? 'opacity-50' : ''}>Include child companies</span>
+        </label>
+
+        <label className="flex items-center gap-2 text-gray-900 dark:text-gray-100">
+          <input
+            type="checkbox"
+            checked={showEdges}
+            onChange={(e) => setShowEdges(e.target.checked)}
+            className="rounded border-gray-300 dark:border-gray-600"
+          />
+          <span>Display Edges</span>
+        </label>
+
+        <Legend activeFilters={activeFilters} onFilterChange={handleFilterChange} theme={theme} />
+      </div>
+
+      <div className="w-full h-full">
         <ReactFlow
           nodes={nodesState}
           edges={showEdges ? edges : []}
-          onNodesChange={handleNodesChange}
+          onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeMouseEnter={onNodeMouseEnter}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
-          fitView
         >
           <Controls />
-          <Background gap={12} size={1} />
-          <Legend 
-            activeFilters={activeFilters} 
-            onFilterChange={handleFilterChange}
-            theme={theme}
-          />
+          <Background />
         </ReactFlow>
       </div>
+
+      {selectedNode && (
+        <DetailsBox
+          nodeId={selectedNode.id}
+          x={selectedNode.x}
+          y={selectedNode.y}
+          onClose={() => setSelectedNode(null)}
+          theme={theme}
+        />
+      )}
     </div>
   );
 } 

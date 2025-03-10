@@ -1,7 +1,7 @@
 export type LayoutType = 'hierarchical' | 'circular';
 
 export interface DetailsBoxProps {
-  id: string;
+  nodeId: string;
   x: number;
   y: number;
   onClose: () => void;

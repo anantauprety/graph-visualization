@@ -1,13 +1,14 @@
 import React from 'react';
 import { Theme, themes } from '../utils/theme';
 
-export type NodeLevel = '0' | '1' | '2' | '3';
+export type NodeLevel = '0' | '1' | '2' | '3' | '4';
 
 const legendItems = [
-  { color: '#818cf8', label: 'Start Node (Level 0)', shape: 'rectangle', level: '0' as NodeLevel },
-  { color: '#f472b6', label: 'Process Node (Level 1)', shape: 'circle', level: '1' as NodeLevel },
-  { color: '#4ade80', label: 'Sub-Process (Level 2)', shape: 'rectangle', level: '2' as NodeLevel },
-  { color: '#fb923c', label: 'Task (Level 3)', shape: 'rectangle', level: '3' as NodeLevel },
+  { color: '#818cf8', label: 'Parent Company (Level 0)', shape: 'rectangle', level: '0' as NodeLevel },
+  { color: '#f472b6', label: 'First-Level Subsidiary (Level 1)', shape: 'rectangle', level: '1' as NodeLevel },
+  { color: '#4ade80', label: 'Second-Level Subsidiary (Level 2)', shape: 'rectangle', level: '2' as NodeLevel },
+  { color: '#fb923c', label: 'Third-Level Subsidiary (Level 3)', shape: 'rectangle', level: '3' as NodeLevel },
+  { color: '#a78bfa', label: 'Fourth-Level+ Subsidiary (Level 4)', shape: 'rectangle', level: '4' as NodeLevel },
 ];
 
 interface LegendProps {

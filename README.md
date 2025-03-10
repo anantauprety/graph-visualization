@@ -21,6 +21,10 @@ For Docker deployment:
 - [Docker](https://www.docker.com/products/docker-desktop/)
 - Docker Compose
 
+For Redshift connection:
+- Access to an Amazon Redshift cluster
+- Database credentials with access to the company relationships table
+
 ## Local Development Setup
 
 1. Clone the repository:
@@ -29,17 +33,26 @@ For Docker deployment:
    cd graph-visualization
    ```
 
-2. Install dependencies:
+2. Set up environment variables:
+   ```bash
+   # Copy the example environment file
+   cp .env.example .env
+   
+   # Edit .env with your Redshift credentials
+   nano .env
+   ```
+
+3. Install dependencies:
    ```bash
    npm install
    ```
 
-3. Start the development server:
+4. Start the development server:
    ```bash
    npm run dev
    ```
 
-4. Open your browser and navigate to:
+5. Open your browser and navigate to:
    ```
    http://localhost:5173
    ```
