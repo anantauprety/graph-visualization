@@ -116,6 +116,28 @@ graph-visualization/
 - `npm run lint`: Run ESLint
 - `npm run type-check`: Run TypeScript type checking
 
+## Cleaning and Rebuilding
+
+If you encounter any build issues or need to clean the project:
+
+1. Clean the project:
+   ```bash
+   # Remove build artifacts and dependencies
+   rm -rf node_modules dist .cache
+   
+   # Clean npm cache
+   npm cache clean --force
+   ```
+
+2. Reinstall dependencies and rebuild:
+   ```bash
+   # Install dependencies
+   npm install
+   
+   # Rebuild the project
+   npm run build
+   ```
+
 ## Contributing
 
 1. Fork the repository

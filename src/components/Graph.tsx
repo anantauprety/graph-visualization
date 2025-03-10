@@ -6,12 +6,10 @@ import ReactFlow, {
   useEdgesState,
   addEdge,
   Connection,
-  Edge,
   Node,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
-import { getNodeStyle } from '../utils/nodeStyles';
 import { generateCircularLayout, getChildNodeIds, HIERARCHICAL_POSITIONS } from '../utils/layoutUtils';
 import { LayoutType, SelectedNode } from '../types';
 import { DetailsBox } from './DetailsBox';
@@ -73,15 +71,11 @@ export function Graph() {
   };
 
   const getInitialNodes = () => {
-    const baseNodes = initialNodes.map((node: Node) => {
-      const level = getNodeLevel(node.id);
-      const style = getNodeStyle(node.id, node.type);
-      return {
-        ...node,
-        position: HIERARCHICAL_POSITIONS[node.id as keyof typeof HIERARCHICAL_POSITIONS],
-        style,
-      };
-    });
+    const baseNodes = initialNodes.map((node: Node) => ({
+      ...node,
+      position: HIERARCHICAL_POSITIONS[node.id as keyof typeof HIERARCHICAL_POSITIONS],
+      style: getNodeStyle(node.id, node.type),
+    }));
 
     return layout === 'circular' ? generateCircularLayout(baseNodes) : baseNodes;
   };
@@ -90,17 +84,13 @@ export function Graph() {
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   useEffect(() => {
-    const currentNodes = nodesState.map(node => {
-      const level = getNodeLevel(node.id);
-      const style = getNodeStyle(node.id, node.type);
-      return {
-        ...node,
-        position: layout === 'circular' 
-          ? generateCircularLayout(nodesState)[nodesState.findIndex(n => n.id === node.id)].position
-          : HIERARCHICAL_POSITIONS[node.id as keyof typeof HIERARCHICAL_POSITIONS],
-        style,
-      };
-    });
+    const currentNodes = nodesState.map(node => ({
+      ...node,
+      position: layout === 'circular' 
+        ? generateCircularLayout(nodesState)[nodesState.findIndex(n => n.id === node.id)].position
+        : HIERARCHICAL_POSITIONS[node.id as keyof typeof HIERARCHICAL_POSITIONS],
+      style: getNodeStyle(node.id, node.type),
+    }));
     setNodes(currentNodes);
   }, [layout, activeFilters, theme]);
 

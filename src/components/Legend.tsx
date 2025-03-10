@@ -1,4 +1,3 @@
-import React from 'react';
 import { Theme, themes } from '../utils/theme';
 
 export type NodeLevel = '0' | '1' | '2' | '3';
